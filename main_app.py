@@ -1,13 +1,16 @@
 import os
 import uuid
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QLineEdit, QPushButton, QMessageBox
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from dotenv import load_dotenv
 from markdown import markdown
+from markdown.extensions.fenced_code import FencedCodeExtension
 from markdown.extensions.codehilite import CodeHiliteExtension
 from pygments.formatters.html import HtmlFormatter
 from bs4 import BeautifulSoup
 import api_client
+import re
 
 
 class MainWindow(QMainWindow):
@@ -28,8 +31,14 @@ class MainWindow(QMainWindow):
         self.fetch_button.clicked.connect(self.fetch_and_display)
         self.layout.addWidget(self.fetch_button)
 
+        self.copy_all_button = QPushButton("Copy All Content", self)
+        self.copy_all_button.clicked.connect(self.copy_all_content)
+        self.layout.addWidget(self.copy_all_button)
+
         self.web_view = QWebEngineView(self)
         self.layout.addWidget(self.web_view)
+
+        self.raw_markdown = ""
 
     def fetch_and_display(self):
         # Access the OpenAI API key
@@ -51,18 +60,30 @@ class MainWindow(QMainWindow):
 
         # Send request to GPT API
         response = api_client.send_gpt_request(openai_api_key, model, user_prompt)
+        self.raw_markdown = response  # Store the raw markdown content
 
         # Convert Markdown to HTML with code highlighting
         codehilite = CodeHiliteExtension(linenums=False, css_class='codehilite')
-        html_content = markdown(response, extensions=[codehilite, 'fenced_code'])
+        fenced_code = FencedCodeExtension()
+        html_content = markdown(response, extensions=[codehilite, fenced_code])
 
         # Add headers and "Copy" buttons to code blocks
-        html_content = self.add_code_headers_and_copy_buttons(html_content)
+        html_content = self.add_code_headers_and_copy_buttons(html_content, response)
 
         # Display in QWebEngineView
         self.web_view.setHtml(html_content)
 
-    def add_code_headers_and_copy_buttons(self, html_content):
+    def extract_languages_from_markdown(self, markdown_content):
+        # Extract languages from the Markdown content using regex
+        pattern = re.compile(r'```(\w+)?')
+        matches = pattern.findall(markdown_content)
+        languages = ['plaintext' if not lang else lang for lang in matches]
+        return languages
+
+    def add_code_headers_and_copy_buttons(self, html_content, markdown_content):
+        # Extract languages from Markdown content
+        languages = self.extract_languages_from_markdown(markdown_content)
+
         # Ensure the HTML content has necessary structure
         full_html_content = f"""
         <html>
@@ -133,10 +154,14 @@ class MainWindow(QMainWindow):
         soup = BeautifulSoup(full_html_content, 'html.parser')
 
         # Find all code blocks
-        for code_block in soup.find_all('div', class_='codehilite'):
+        code_blocks = soup.find_all('div', class_='codehilite')
+        for index, code_block in enumerate(code_blocks):
             # Create a unique identifier
             unique_id = str(uuid.uuid4())
             code_block['id'] = unique_id
+
+            # Detect the language
+            language = languages[index] if index < len(languages) else 'plaintext'
 
             # Wrap the code block in a div with a unique identifier
             div = soup.new_tag('div', **{'class': 'code-block-container', 'id': unique_id})
@@ -144,13 +169,13 @@ class MainWindow(QMainWindow):
 
             # Create a header
             header = soup.new_tag('div', **{'class': 'code-header'})
-            language = soup.new_tag('span', **{'class': 'language'})
-            language.string = "python"  # This should be dynamically set based on actual language
+            language_span = soup.new_tag('span', **{'class': 'language'})
+            language_span.string = language
             button = soup.new_tag('button', **{'class': 'copy-button', 'onclick': f'copyToClipboard(this)'})
             button.string = "Copy"
 
             # Insert the language and button into the header
-            header.insert(0, language)
+            header.insert(0, language_span)
             header.insert(1, button)
 
             # Insert the header before the code block
@@ -158,6 +183,12 @@ class MainWindow(QMainWindow):
 
         # Return the modified HTML content as a string
         return str(soup)
+
+    def copy_all_content(self):
+        # Copy the raw markdown content to the clipboard
+        clipboard = QApplication.clipboard()
+        clipboard.setText(self.raw_markdown)
+        QMessageBox.information(self, "Copied", "The entire content has been copied to the clipboard.")
 
 
 if __name__ == "__main__":
