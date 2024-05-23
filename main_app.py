@@ -1,12 +1,12 @@
 import os
 import uuid
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton, QMainWindow, QMessageBox
+from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QLineEdit, QPushButton, QMessageBox
 from PyQt5.QtWebEngineWidgets import QWebEngineView
-from PyQt5.QtCore import QUrl
 from dotenv import load_dotenv
-import api_client
 from markdown import markdown
 from bs4 import BeautifulSoup
+import api_client
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -77,20 +77,31 @@ class MainWindow(QMainWindow):
                     font-size: 12px;
                     z-index: 1;
                 }}
+                pre {{
+                    background: #000000;  /* Set background to black */
+                    color: #d8dee9;      /* Set text color to a light color */
+                    border-radius: 5px;
+                    padding: 10px;
+                    overflow: auto;
+                }}
             </style>
         </head>
         <body>
             {html_content}
             <script>
-            function copyToClipboard(id) {{
-                var codeBlock = document.getElementById(id).innerText;
+            function copyToClipboard(button) {{
+                var codeBlock = button.nextElementSibling;
+                var text = codeBlock.innerText || codeBlock.textContent;
                 var tempTextArea = document.createElement("textarea");
-                tempTextArea.value = codeBlock;
+                tempTextArea.value = text;
                 document.body.appendChild(tempTextArea);
                 tempTextArea.select();
                 document.execCommand("copy");
                 document.body.removeChild(tempTextArea);
-                alert("Copied to clipboard");
+                button.innerText = "Copied";
+                setTimeout(function() {{
+                    button.innerText = "Copy";
+                }}, 10000);
             }}
             </script>
         </body>
@@ -111,7 +122,7 @@ class MainWindow(QMainWindow):
             code_block.wrap(div)
 
             # Create a copy button
-            button = soup.new_tag('button', **{'class': 'copy-button', 'onclick': f'copyToClipboard("{unique_id}")'})
+            button = soup.new_tag('button', **{'class': 'copy-button', 'onclick': f'copyToClipboard(this)'})
             button.string = "Copy"
 
             # Insert the button inside the div
@@ -119,6 +130,7 @@ class MainWindow(QMainWindow):
 
         # Return the modified HTML content as a string
         return str(soup)
+
 
 if __name__ == "__main__":
     load_dotenv()
