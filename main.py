@@ -223,7 +223,7 @@ class MainWindow(QMainWindow):
             self.conversation_history.append({"role": "assistant", "content": response})
 
             # Display the chat history
-            self.display_chat_history(user_prompt, html_content)
+            self.display_chat_history(user_prompt, response, html_content)
 
             self.splitter.setSizes([400, 100])
 
@@ -351,15 +351,20 @@ class MainWindow(QMainWindow):
 
         return str(soup)
 
-    def display_chat_history(self, user_prompt, html_response):
+    def display_chat_history(self, user_prompt, response_text, html_response):
         prompt_label = QLabel(f"Prompt: {user_prompt}")
         prompt_label.setWordWrap(True)
+
         response_view = QWebEngineView()
         response_view.setHtml(html_response)
+
+        copy_response_button = QPushButton("Copy Response")
+        copy_response_button.clicked.connect(lambda: self.copy_to_clipboard(response_text))
 
         prompt_frame = QFrame()
         prompt_layout = QVBoxLayout(prompt_frame)
         prompt_layout.addWidget(prompt_label)
+        prompt_layout.addWidget(copy_response_button)
         prompt_layout.addWidget(response_view)
         prompt_frame.setFrameShape(QFrame.Box)
         prompt_frame.setFrameShadow(QFrame.Raised)
@@ -367,9 +372,17 @@ class MainWindow(QMainWindow):
         self.history_layout.addWidget(prompt_frame)
         self.history_area.verticalScrollBar().setValue(self.history_area.verticalScrollBar().maximum())
 
+    def copy_to_clipboard(self, text):
+        clipboard = QApplication.clipboard()
+        clipboard.setText(text)
+        QMessageBox.information(self, "Copied", "The content has been copied to the clipboard.")
+
     def copy_all_content(self):
         clipboard = QApplication.clipboard()
-        clipboard.setText(self.raw_markdown)
+        full_history = ""
+        for item in self.conversation_history:
+            full_history += item["content"] + "\n\n"
+        clipboard.setText(full_history)
         QMessageBox.information(self, "Copied", "The entire content has been copied to the clipboard.")
 
     def save_api_key(self):
