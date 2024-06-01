@@ -169,7 +169,7 @@ def load_chat_history(session_id):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("GPT-4 Markdown Renderer")
+        self.setWindowTitle("GPT Desktop Client")
         self.setGeometry(100, 100, 1000, 600)
 
         self.tabs = QTabWidget()
@@ -228,7 +228,7 @@ class MainWindow(QMainWindow):
         self.model_selector.addItems(["gpt-3.5-turbo", "gpt-4", "gpt-4o"])
         self.controls_layout.addWidget(self.model_selector)
 
-        self.fetch_button = QPushButton("Generate Markdown", self)
+        self.fetch_button = QPushButton("Submit", self)
         self.fetch_button.clicked.connect(self.fetch_and_display)
 
         self.new_chat_button = QPushButton("New Chat", self)
@@ -295,7 +295,14 @@ class MainWindow(QMainWindow):
         model = self.model_selector.currentText()
 
         try:
-            completion = self.send_gpt_request(openai_api_key, model, user_prompt)
+            # Create the chat messages list, starting with the conversation history
+            chat_messages = [{"role": message["role"], "content": message["content"]} for message in
+                             self.conversation_history]
+
+            # Add the new user prompt to the chat messages
+            chat_messages.append({"role": "user", "content": user_prompt})
+
+            completion = self.send_gpt_request(openai_api_key, model, chat_messages)
             response = completion.choices[0].message.content
             self.raw_markdown = response
 
@@ -327,7 +334,8 @@ class MainWindow(QMainWindow):
             self.prompt_entry.clear()
 
             # Add the new chat to the chat list
-            if not any(item.text() == self.chat_name for item in self.chat_list_widget.findItems(self.chat_name, Qt.MatchExactly)):
+            if not any(item.text() == self.chat_name for item in
+                       self.chat_list_widget.findItems(self.chat_name, Qt.MatchExactly)):
                 item = QListWidgetItem(self.chat_name)
                 item.setData(Qt.UserRole, self.session_id)
                 self.chat_list_widget.addItem(item)
@@ -513,6 +521,7 @@ class MainWindow(QMainWindow):
     def load_chat(self, item):
         self.session_id = item.data(Qt.UserRole)
         self.chat_name = item.text()
+        self.setWindowTitle(f"GPT Desktop Client - Selected Chat: {self.chat_name}")  # Set the window title
         while self.history_layout.count():
             child = self.history_layout.takeAt(0)
             if child.widget():
