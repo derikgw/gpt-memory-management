@@ -1,7 +1,9 @@
 import os
 import uuid
+import sqlite3
+from cryptography.fernet import Fernet, InvalidToken
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QTextEdit, QPushButton, QMessageBox, \
-    QSplitter, QHBoxLayout, QComboBox
+    QSplitter, QHBoxLayout, QComboBox, QTabWidget, QLineEdit, QLabel, QFormLayout
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtCore import Qt
 from dotenv import load_dotenv
@@ -15,6 +17,59 @@ from bs4 import BeautifulSoup
 import openai
 import re
 
+# Encryption setup
+KEY_FILE = "encryption.key"
+
+def load_or_generate_key():
+    if os.path.exists(KEY_FILE):
+        with open(KEY_FILE, "rb") as key_file:
+            key = key_file.read()
+    else:
+        key = Fernet.generate_key()
+        with open(KEY_FILE, "wb") as key_file:
+            key_file.write(key)
+    return key
+
+encryption_key = load_or_generate_key()
+cipher_suite = Fernet(encryption_key)
+
+# Database setup
+db_path = "settings.db"
+
+def initialize_database():
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            id INTEGER PRIMARY KEY,
+            api_key TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def save_api_key(api_key):
+    encrypted_api_key = cipher_suite.encrypt(api_key.encode())
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO settings (id, api_key) VALUES (1, ?)", (encrypted_api_key,))
+    conn.commit()
+    conn.close()
+
+def load_api_key():
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT api_key FROM settings WHERE id = 1")
+    result = cursor.fetchone()
+    conn.close()
+    if result:
+        try:
+            decrypted_api_key = cipher_suite.decrypt(result[0]).decode()
+            return decrypted_api_key
+        except InvalidToken:
+            QMessageBox.warning(None, "Invalid Token", "The stored API key could not be decrypted. Please re-enter your API key.")
+            return ""
+    return ""
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -22,9 +77,20 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("GPT-4 Markdown Renderer")
         self.setGeometry(100, 100, 800, 600)
 
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
-        self.layout = QVBoxLayout(self.central_widget)
+        self.tabs = QTabWidget()
+        self.setCentralWidget(self.tabs)
+
+        self.main_widget = QWidget()
+        self.settings_widget = QWidget()
+
+        self.tabs.addTab(self.main_widget, "Main")
+        self.tabs.addTab(self.settings_widget, "Settings")
+
+        self.setup_main_tab()
+        self.setup_settings_tab()
+
+    def setup_main_tab(self):
+        self.layout = QVBoxLayout(self.main_widget)
 
         self.splitter = QSplitter(Qt.Vertical)
 
@@ -58,11 +124,26 @@ class MainWindow(QMainWindow):
 
         self.raw_markdown = ""
 
+    def setup_settings_tab(self):
+        self.settings_layout = QFormLayout(self.settings_widget)
+
+        self.api_key_input = QLineEdit(self)
+        self.api_key_input.setPlaceholderText("Enter your OpenAI API Key")
+        saved_api_key = load_api_key()
+        if saved_api_key:
+            self.api_key_input.setText(saved_api_key)
+
+        self.save_api_key_button = QPushButton("Save API Key", self)
+        self.save_api_key_button.clicked.connect(self.save_api_key)
+
+        self.settings_layout.addRow(QLabel("OpenAI API Key:"), self.api_key_input)
+        self.settings_layout.addWidget(self.save_api_key_button)
+
     def fetch_and_display(self):
-        openai_api_key = os.getenv('OPENAI_API_KEY')
+        openai_api_key = load_api_key()
 
         if not openai_api_key:
-            QMessageBox.critical(self, "Error", "OPENAI_API_KEY not set in .env file.")
+            QMessageBox.critical(self, "Error", "OpenAI API Key not set. Please enter it in the settings tab.")
             return
 
         user_prompt = self.prompt_entry.toPlainText()
@@ -209,8 +290,17 @@ class MainWindow(QMainWindow):
         clipboard.setText(self.raw_markdown)
         QMessageBox.information(self, "Copied", "The entire content has been copied to the clipboard.")
 
+    def save_api_key(self):
+        api_key = self.api_key_input.text()
+        if api_key:
+            save_api_key(api_key)
+            QMessageBox.information(self, "Saved", "API Key has been saved.")
+        else:
+            QMessageBox.warning(self, "Input Error", "Please enter a valid API Key.")
+
 
 if __name__ == "__main__":
+    initialize_database()
     load_dotenv()
 
     app = QApplication([])
