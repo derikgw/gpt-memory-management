@@ -3,9 +3,9 @@ import uuid
 import sqlite3
 from cryptography.fernet import Fernet, InvalidToken
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QTextEdit, QPushButton, QMessageBox, \
-    QSplitter, QHBoxLayout, QComboBox, QTabWidget, QLineEdit, QLabel, QFormLayout, QFontComboBox, QSpinBox, QScrollArea, QFrame, QListWidget, QListWidgetItem
+    QSplitter, QHBoxLayout, QComboBox, QTabWidget, QLineEdit, QLabel, QFormLayout, QFontComboBox, QSpinBox, QScrollArea, QFrame, QListWidget, QListWidgetItem, QMenu, QInputDialog
 from PyQt5.QtWebEngineWidgets import QWebEngineView
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QPoint
 from PyQt5.QtGui import QFont
 from dotenv import load_dotenv
 from markdown import markdown
@@ -59,6 +59,7 @@ def initialize_database():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS chats (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
             chat_name TEXT,
             message_role TEXT,
             message_content TEXT
@@ -114,11 +115,11 @@ def load_font_settings():
     return "Arial", 12  # default font settings if none are saved
 
 
-def save_chat_history(chat_name, role, content):
+def save_chat_history(session_id, chat_name, role, content):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO chats (chat_name, message_role, message_content) VALUES (?, ?, ?)",
-                   (chat_name, role, content))
+    cursor.execute("INSERT INTO chats (session_id, chat_name, message_role, message_content) VALUES (?, ?, ?, ?)",
+                   (session_id, chat_name, role, content))
     conn.commit()
     conn.close()
 
@@ -126,10 +127,18 @@ def save_chat_history(chat_name, role, content):
 def load_chat_history():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    cursor.execute("SELECT chat_name, message_role, message_content FROM chats ORDER BY id")
+    cursor.execute("SELECT session_id, chat_name, message_role, message_content FROM chats ORDER BY id")
     chats = cursor.fetchall()
     conn.close()
     return chats
+
+
+def update_chat_name(session_id, new_name):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE chats SET chat_name = ? WHERE session_id = ?", (new_name, session_id))
+    conn.commit()
+    conn.close()
 
 
 class MainWindow(QMainWindow):
@@ -147,7 +156,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.main_widget, "Main")
         self.tabs.addTab(self.settings_widget, "Settings")
 
-        self.chat_name = None
+        self.session_id = None
+        self.chat_name = None  # Define chat_name here
         self.setup_main_tab()
         self.setup_settings_tab()
 
@@ -161,6 +171,8 @@ class MainWindow(QMainWindow):
 
         self.chat_list_widget = QListWidget(self)
         self.chat_list_widget.itemClicked.connect(self.load_chat)
+        self.chat_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.chat_list_widget.customContextMenuRequested.connect(self.show_context_menu)
         self.chat_splitter.addWidget(self.chat_list_widget)
 
         self.chat_area_widget = QWidget()
@@ -268,7 +280,9 @@ class MainWindow(QMainWindow):
 
             html_content = self.add_code_headers_and_copy_buttons(html_content, response)
 
-            # Generate chat name if not provided
+            # Generate session ID and chat name if not provided
+            if self.session_id is None:
+                self.session_id = str(uuid.uuid4())
             if self.chat_name is None:
                 self.chat_name = user_prompt[:60]
 
@@ -277,14 +291,20 @@ class MainWindow(QMainWindow):
             self.conversation_history.append({"role": "assistant", "content": response})
 
             # Save chat history
-            save_chat_history(self.chat_name, "user", user_prompt)
-            save_chat_history(self.chat_name, "assistant", response)
+            save_chat_history(self.session_id, self.chat_name, "user", user_prompt)
+            save_chat_history(self.session_id, self.chat_name, "assistant", response)
 
             # Display the chat history
             self.display_chat_history(user_prompt, response, html_content)
 
             # Clear the current prompt entry
             self.prompt_entry.clear()
+
+            # Add the new chat to the chat list
+            if not any(item.text() == self.chat_name for item in self.chat_list_widget.findItems(self.chat_name, Qt.MatchExactly)):
+                item = QListWidgetItem(self.chat_name)
+                item.setData(Qt.UserRole, self.session_id)
+                self.chat_list_widget.addItem(item)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"An error occurred: {e}")
 
@@ -459,19 +479,22 @@ class MainWindow(QMainWindow):
 
     def load_chats(self):
         chats = load_chat_history()
-        chat_names = set(chat[0] for chat in chats)
+        chat_names = set(chat[1] for chat in chats)
         for chat_name in chat_names:
+            session_id = next(chat[0] for chat in chats if chat[1] == chat_name)
             item = QListWidgetItem(chat_name)
+            item.setData(Qt.UserRole, session_id)
             self.chat_list_widget.addItem(item)
 
     def load_chat(self, item):
+        self.session_id = item.data(Qt.UserRole)
         self.chat_name = item.text()
         self.history_layout = QVBoxLayout(self.history_widget)
         self.history_widget.setLayout(self.history_layout)
         chats = load_chat_history()
         self.conversation_history = []
-        for chat_name, role, content in chats:
-            if chat_name == self.chat_name:
+        for session_id, chat_name, role, content in chats:
+            if session_id == self.session_id:
                 self.conversation_history.append({"role": role, "content": content})
                 if role == "user":
                     prompt_label = QLabel(f"Prompt: {content}")
@@ -486,12 +509,29 @@ class MainWindow(QMainWindow):
         self.history_area.verticalScrollBar().setValue(self.history_area.verticalScrollBar().maximum())
 
     def new_chat(self):
+        self.session_id = None
         self.chat_name = None
         self.conversation_history = []
         self.history_layout = QVBoxLayout(self.history_widget)
         self.history_widget.setLayout(self.history_layout)
         self.prompt_entry.clear()
         self.history_area.verticalScrollBar().setValue(self.history_area.verticalScrollBar().maximum())
+
+    def show_context_menu(self, pos):
+        context_menu = QMenu(self)
+        rename_action = context_menu.addAction("Rename Chat")
+        action = context_menu.exec_(self.chat_list_widget.mapToGlobal(pos))
+        if action == rename_action:
+            self.rename_chat()
+
+    def rename_chat(self):
+        item = self.chat_list_widget.currentItem()
+        if item:
+            new_name, ok = QInputDialog.getText(self, "Rename Chat", "Enter new chat name:")
+            if ok and new_name:
+                session_id = item.data(Qt.UserRole)
+                update_chat_name(session_id, new_name)
+                item.setText(new_name)
 
 
 if __name__ == "__main__":
