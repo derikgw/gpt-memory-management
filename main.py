@@ -3,7 +3,7 @@ import uuid
 import sqlite3
 from cryptography.fernet import Fernet, InvalidToken
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QTextEdit, QPushButton, QMessageBox, \
-    QSplitter, QHBoxLayout, QComboBox, QTabWidget, QLineEdit, QLabel, QFormLayout, QFontComboBox, QSpinBox
+    QSplitter, QHBoxLayout, QComboBox, QTabWidget, QLineEdit, QLabel, QFormLayout, QFontComboBox, QSpinBox, QScrollArea, QFrame
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
@@ -20,7 +20,6 @@ import re
 # Encryption setup
 KEY_FILE = "encryption.key"
 
-
 def load_or_generate_key():
     if os.path.exists(KEY_FILE):
         with open(KEY_FILE, "rb") as key_file:
@@ -31,13 +30,11 @@ def load_or_generate_key():
             key_file.write(key)
     return key
 
-
 encryption_key = load_or_generate_key()
 cipher_suite = Fernet(encryption_key)
 
 # Database setup
 db_path = "settings.db"
-
 
 def initialize_database():
     conn = sqlite3.connect(db_path)
@@ -59,7 +56,6 @@ def initialize_database():
     conn.commit()
     conn.close()
 
-
 def save_api_key(api_key):
     encrypted_api_key = cipher_suite.encrypt(api_key.encode())
     conn = sqlite3.connect(db_path)
@@ -67,7 +63,6 @@ def save_api_key(api_key):
     cursor.execute("INSERT OR REPLACE INTO api_keys (id, api_key) VALUES (1, ?)", (encrypted_api_key,))
     conn.commit()
     conn.close()
-
 
 def load_api_key():
     conn = sqlite3.connect(db_path)
@@ -85,7 +80,6 @@ def load_api_key():
             return ""
     return ""
 
-
 def save_font_settings(font_name, font_size):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -93,7 +87,6 @@ def save_font_settings(font_name, font_size):
                    (font_name, font_size))
     conn.commit()
     conn.close()
-
 
 def load_font_settings():
     conn = sqlite3.connect(db_path)
@@ -104,7 +97,6 @@ def load_font_settings():
     if result:
         return result[0], result[1]
     return "Arial", 12  # default font settings if none are saved
-
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -124,18 +116,25 @@ class MainWindow(QMainWindow):
         self.setup_main_tab()
         self.setup_settings_tab()
 
+        self.conversation_history = []  # List to store the chat history
+
     def setup_main_tab(self):
         self.layout = QVBoxLayout(self.main_widget)
 
         self.splitter = QSplitter(Qt.Vertical)
 
+        self.history_area = QScrollArea(self)
+        self.history_area.setWidgetResizable(True)
+        self.history_widget = QWidget()
+        self.history_layout = QVBoxLayout(self.history_widget)
+        self.history_widget.setLayout(self.history_layout)
+        self.history_area.setWidget(self.history_widget)
+
         self.prompt_entry = QTextEdit(self)
         self.prompt_entry.setPlaceholderText("Enter your prompt")
 
-        self.web_view = QWebEngineView(self)
-
+        self.splitter.addWidget(self.history_area)
         self.splitter.addWidget(self.prompt_entry)
-        self.splitter.addWidget(self.web_view)
 
         self.layout.addWidget(self.splitter)
 
@@ -204,7 +203,12 @@ class MainWindow(QMainWindow):
         model = self.model_selector.currentText()
 
         try:
-            completion = self.send_gpt_request(openai_api_key, model, user_prompt)
+            # Prepare the conversation history for the request
+            messages = [{"role": "system", "content": "You are an assistant."}]
+            messages.extend(self.conversation_history)
+            messages.append({"role": "user", "content": user_prompt})
+
+            completion = self.send_gpt_request(openai_api_key, model, messages)
             response = completion.choices[0].message.content
             self.raw_markdown = response
 
@@ -214,13 +218,21 @@ class MainWindow(QMainWindow):
 
             html_content = self.add_code_headers_and_copy_buttons(html_content, response)
 
-            self.web_view.setHtml(html_content)
+            # Update the conversation history
+            self.conversation_history.append({"role": "user", "content": user_prompt})
+            self.conversation_history.append({"role": "assistant", "content": response})
 
-            self.splitter.setSizes([100, 500])
+            # Display the chat history
+            self.display_chat_history(user_prompt, html_content)
+
+            self.splitter.setSizes([400, 100])
+
+            # Clear the current prompt entry
+            self.prompt_entry.clear()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"An error occurred: {e}")
 
-    def send_gpt_request(self, api_key, model, prompt):
+    def send_gpt_request(self, api_key, model, messages):
         # Set up the OpenAI client with the provided API key
         client = OpenAI()
         client.api_key = api_key
@@ -228,7 +240,7 @@ class MainWindow(QMainWindow):
         # Prepare and send the request to OpenAI
         completion = client.chat.completions.create(
             model=model,
-            messages=[{"role": "user", "content": f"{prompt}: "}],
+            messages=messages,
             stream=False  # Stream responses to process them as they arrive
         )
 
@@ -337,6 +349,22 @@ class MainWindow(QMainWindow):
 
         return str(soup)
 
+    def display_chat_history(self, user_prompt, html_response):
+        prompt_label = QLabel(f"Prompt: {user_prompt}")
+        prompt_label.setWordWrap(True)
+        response_view = QWebEngineView()
+        response_view.setHtml(html_response)
+
+        prompt_frame = QFrame()
+        prompt_layout = QVBoxLayout(prompt_frame)
+        prompt_layout.addWidget(prompt_label)
+        prompt_layout.addWidget(response_view)
+        prompt_frame.setFrameShape(QFrame.Box)
+        prompt_frame.setFrameShadow(QFrame.Raised)
+
+        self.history_layout.addWidget(prompt_frame)
+        self.history_area.verticalScrollBar().setValue(self.history_area.verticalScrollBar().maximum())
+
     def copy_all_content(self):
         clipboard = QApplication.clipboard()
         clipboard.setText(self.raw_markdown)
@@ -357,7 +385,6 @@ class MainWindow(QMainWindow):
         self.prompt_entry.setFontFamily(font_name)
         self.prompt_entry.setFontPointSize(font_size)
         QMessageBox.information(self, "Saved", "Font settings have been saved.")
-
 
 if __name__ == "__main__":
     initialize_database()
