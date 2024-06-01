@@ -57,12 +57,19 @@ def initialize_database():
         )
     """)
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            session_id TEXT PRIMARY KEY,
+            chat_name TEXT
+        )
+    """)
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS chats (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id TEXT,
-            chat_name TEXT,
             message_role TEXT,
-            message_content TEXT
+            message_content TEXT,
+            model TEXT,
+            FOREIGN KEY (session_id) REFERENCES chat_sessions (session_id)
         )
     """)
     conn.commit()
@@ -115,30 +122,48 @@ def load_font_settings():
     return "Arial", 12  # default font settings if none are saved
 
 
-def save_chat_history(session_id, chat_name, role, content):
+def create_chat_session(session_id, chat_name):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO chats (session_id, chat_name, message_role, message_content) VALUES (?, ?, ?, ?)",
-                   (session_id, chat_name, role, content))
+    cursor.execute("INSERT INTO chat_sessions (session_id, chat_name) VALUES (?, ?)",
+                   (session_id, chat_name))
     conn.commit()
     conn.close()
-
-
-def load_chat_history():
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT session_id, chat_name, message_role, message_content FROM chats ORDER BY id")
-    chats = cursor.fetchall()
-    conn.close()
-    return chats
 
 
 def update_chat_name(session_id, new_name):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    cursor.execute("UPDATE chats SET chat_name = ? WHERE session_id = ?", (new_name, session_id))
+    cursor.execute("UPDATE chat_sessions SET chat_name = ? WHERE session_id = ?", (new_name, session_id))
     conn.commit()
     conn.close()
+
+
+def save_chat_history(session_id, role, content, model):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO chats (session_id, message_role, message_content, model) VALUES (?, ?, ?, ?)",
+                   (session_id, role, content, model))
+    conn.commit()
+    conn.close()
+
+
+def load_chat_sessions():
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT session_id, chat_name FROM chat_sessions")
+    sessions = cursor.fetchall()
+    conn.close()
+    return sessions
+
+
+def load_chat_history(session_id):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT message_role, message_content, model FROM chats WHERE session_id = ? ORDER BY id", (session_id,))
+    chats = cursor.fetchall()
+    conn.close()
+    return chats
 
 
 class MainWindow(QMainWindow):
@@ -157,7 +182,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.settings_widget, "Settings")
 
         self.session_id = None
-        self.chat_name = None  # Define chat_name here
+        self.chat_name = None
         self.setup_main_tab()
         self.setup_settings_tab()
 
@@ -283,6 +308,7 @@ class MainWindow(QMainWindow):
             # Generate session ID and chat name if not provided
             if self.session_id is None:
                 self.session_id = str(uuid.uuid4())
+                create_chat_session(self.session_id, user_prompt[:60])
             if self.chat_name is None:
                 self.chat_name = user_prompt[:60]
 
@@ -291,8 +317,8 @@ class MainWindow(QMainWindow):
             self.conversation_history.append({"role": "assistant", "content": response})
 
             # Save chat history
-            save_chat_history(self.session_id, self.chat_name, "user", user_prompt)
-            save_chat_history(self.session_id, self.chat_name, "assistant", response)
+            save_chat_history(self.session_id, "user", user_prompt, model)
+            save_chat_history(self.session_id, "assistant", response, model)
 
             # Display the chat history
             self.display_chat_history(user_prompt, response, html_content)
@@ -478,10 +504,8 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Saved", "Font settings have been saved.")
 
     def load_chats(self):
-        chats = load_chat_history()
-        chat_names = set(chat[1] for chat in chats)
-        for chat_name in chat_names:
-            session_id = next(chat[0] for chat in chats if chat[1] == chat_name)
+        sessions = load_chat_sessions()
+        for session_id, chat_name in sessions:
             item = QListWidgetItem(chat_name)
             item.setData(Qt.UserRole, session_id)
             self.chat_list_widget.addItem(item)
@@ -489,33 +513,48 @@ class MainWindow(QMainWindow):
     def load_chat(self, item):
         self.session_id = item.data(Qt.UserRole)
         self.chat_name = item.text()
-        self.history_layout = QVBoxLayout(self.history_widget)
-        self.history_widget.setLayout(self.history_layout)
-        chats = load_chat_history()
+        while self.history_layout.count():
+            child = self.history_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        chats = load_chat_history(self.session_id)
         self.conversation_history = []
-        for session_id, chat_name, role, content in chats:
-            if session_id == self.session_id:
-                self.conversation_history.append({"role": role, "content": content})
-                if role == "user":
-                    prompt_label = QLabel(f"Prompt: {content}")
-                    prompt_label.setWordWrap(True)
-                    self.history_layout.addWidget(prompt_label)
-                else:
-                    response_view = QWebEngineView()
-                    html_content = markdown(content, extensions=[CodeHiliteExtension(linenums=False, css_class='codehilite'), FencedCodeExtension()])
-                    html_content = self.add_code_headers_and_copy_buttons(html_content, content)
-                    response_view.setHtml(html_content)
-                    self.history_layout.addWidget(response_view)
+        model = None
+        for role, content, model_used in chats:
+            self.conversation_history.append({"role": role, "content": content})
+            model = model_used
+            if role == "user":
+                prompt_label = QLabel(f"Prompt: {content}")
+                prompt_label.setWordWrap(True)
+                self.history_layout.addWidget(prompt_label)
+            else:
+                response_view = QWebEngineView()
+                html_content = markdown(content,
+                                        extensions=[CodeHiliteExtension(linenums=False, css_class='codehilite'),
+                                                    FencedCodeExtension()])
+                html_content = self.add_code_headers_and_copy_buttons(html_content, content)
+                response_view.setHtml(html_content)
+                self.history_layout.addWidget(response_view)
+        self.model_selector.setCurrentText(model)
+        self.history_widget.setLayout(self.history_layout)
+        self.history_area.setWidget(self.history_widget)
+        self.history_widget.update()
+        self.history_area.update()
+        # Force scroll to the bottom
         self.history_area.verticalScrollBar().setValue(self.history_area.verticalScrollBar().maximum())
 
     def new_chat(self):
         self.session_id = None
         self.chat_name = None
         self.conversation_history = []
-        self.history_layout = QVBoxLayout(self.history_widget)
-        self.history_widget.setLayout(self.history_layout)
+        while self.history_layout.count():
+            child = self.history_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
         self.prompt_entry.clear()
         self.history_area.verticalScrollBar().setValue(self.history_area.verticalScrollBar().maximum())
+        # Set focus on the prompt entry to start the new chat
+        self.prompt_entry.setFocus()
 
     def show_context_menu(self, pos):
         context_menu = QMenu(self)
