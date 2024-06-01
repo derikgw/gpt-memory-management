@@ -297,7 +297,9 @@ class MainWindow(QMainWindow):
                     color: {text_color};
                     border-radius: 0 0 6px 6px;
                     padding: 10px;
-                    overflow: auto;
+                    overflow-x: auto;
+                    overflow-y: visible;
+                    white-space: pre;
                     margin: 0;
                 }}
             </style>
