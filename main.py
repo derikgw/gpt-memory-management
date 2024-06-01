@@ -1,7 +1,7 @@
 import os
 import uuid
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QTextEdit, QPushButton, QMessageBox, \
-    QSplitter, QHBoxLayout
+    QSplitter, QHBoxLayout, QComboBox
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtCore import Qt
 from dotenv import load_dotenv
@@ -12,13 +12,14 @@ from openai import OpenAI
 from pygments.formatters.html import HtmlFormatter
 from pygments.styles import get_style_by_name
 from bs4 import BeautifulSoup
+import openai
 import re
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("GPT-4o Markdown Renderer")
+        self.setWindowTitle("GPT-4 Markdown Renderer")
         self.setGeometry(100, 100, 800, 600)
 
         self.central_widget = QWidget()
@@ -39,6 +40,10 @@ class MainWindow(QMainWindow):
 
         self.controls_widget = QWidget(self)
         self.controls_layout = QHBoxLayout(self.controls_widget)
+
+        self.model_selector = QComboBox(self)
+        self.model_selector.addItems(["gpt-3.5-turbo", "gpt-4", "gpt-4o"])
+        self.controls_layout.addWidget(self.model_selector)
 
         self.fetch_button = QPushButton("Generate Markdown", self)
         self.fetch_button.clicked.connect(self.fetch_and_display)
@@ -66,7 +71,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Input Error", "Please enter a prompt.")
             return
 
-        model = "gpt-4o-2024-05-13"
+        model = self.model_selector.currentText()
 
         try:
             completion = self.send_gpt_request(openai_api_key, model, user_prompt)
