@@ -1,22 +1,22 @@
 import os
-import uuid
+import re
 import sqlite3
-from cryptography.fernet import Fernet, InvalidToken
+import uuid
+
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QTextEdit, QPushButton, QMessageBox, \
     QSplitter, QHBoxLayout, QComboBox, QTabWidget, QLineEdit, QLabel, QFormLayout, QFontComboBox, QSpinBox, QScrollArea, \
     QFrame, QListWidget, QListWidgetItem, QMenu, QInputDialog
-from PyQt5.QtWebEngineWidgets import QWebEngineView
-from PyQt5.QtCore import Qt, QPoint
-from PyQt5.QtGui import QFont, QIcon
+from bs4 import BeautifulSoup
+from cryptography.fernet import Fernet, InvalidToken
 from dotenv import load_dotenv
 from markdown import markdown
-from markdown.extensions.fenced_code import FencedCodeExtension
 from markdown.extensions.codehilite import CodeHiliteExtension
+from markdown.extensions.fenced_code import FencedCodeExtension
 from openai import OpenAI
 from pygments.formatters.html import HtmlFormatter
-from bs4 import BeautifulSoup
-import openai
-import re
 
 # Encryption setup
 KEY_FILE = "encryption.key"
