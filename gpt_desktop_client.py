@@ -18,8 +18,14 @@ from markdown.extensions.fenced_code import FencedCodeExtension
 from openai import OpenAI
 from pygments.formatters.html import HtmlFormatter
 
-# Encryption setup
-KEY_FILE = "encryption.key"
+# Determine the user's profile directory
+app_data_dir = os.path.join(os.getenv('APPDATA'), 'GPTDesktopClient')
+if not os.path.exists(app_data_dir):
+    os.makedirs(app_data_dir)
+
+# Define the paths for the database and encryption key
+KEY_FILE = os.path.join(app_data_dir, "encryption.key")
+db_path = os.path.join(app_data_dir, "settings.db")
 
 
 def load_or_generate_key():
@@ -37,7 +43,6 @@ encryption_key = load_or_generate_key()
 cipher_suite = Fernet(encryption_key)
 
 # Database setup
-db_path = "settings.db"
 
 
 def initialize_database():
