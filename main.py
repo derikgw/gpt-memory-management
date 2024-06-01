@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QTe
     QFrame, QListWidget, QListWidgetItem, QMenu, QInputDialog
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtCore import Qt, QPoint
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QIcon
 from dotenv import load_dotenv
 from markdown import markdown
 from markdown.extensions.fenced_code import FencedCodeExtension
@@ -182,6 +182,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("GPT Desktop Client")
         self.setGeometry(100, 100, 1000, 600)
+
+        # Set the window icon
+        self.setWindowIcon(QIcon('images/title_bar_image.png'))
 
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
