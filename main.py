@@ -3,7 +3,8 @@ import uuid
 import sqlite3
 from cryptography.fernet import Fernet, InvalidToken
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QTextEdit, QPushButton, QMessageBox, \
-    QSplitter, QHBoxLayout, QComboBox, QTabWidget, QLineEdit, QLabel, QFormLayout, QFontComboBox, QSpinBox, QScrollArea, QFrame, QListWidget, QListWidgetItem, QMenu, QInputDialog
+    QSplitter, QHBoxLayout, QComboBox, QTabWidget, QLineEdit, QLabel, QFormLayout, QFontComboBox, QSpinBox, QScrollArea, \
+    QFrame, QListWidget, QListWidgetItem, QMenu, QInputDialog
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtCore import Qt, QPoint
 from PyQt5.QtGui import QFont
@@ -139,6 +140,15 @@ def update_chat_name(session_id, new_name):
     conn.close()
 
 
+def delete_chat_session(session_id):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM chats WHERE session_id = ?", (session_id,))
+    cursor.execute("DELETE FROM chat_sessions WHERE session_id = ?", (session_id,))
+    conn.commit()
+    conn.close()
+
+
 def save_chat_history(session_id, role, content, model):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -160,7 +170,8 @@ def load_chat_sessions():
 def load_chat_history(session_id):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    cursor.execute("SELECT message_role, message_content, model FROM chats WHERE session_id = ? ORDER BY id", (session_id,))
+    cursor.execute("SELECT message_role, message_content, model FROM chats WHERE session_id = ? ORDER BY id",
+                   (session_id,))
     chats = cursor.fetchall()
     conn.close()
     return chats
@@ -247,6 +258,9 @@ class MainWindow(QMainWindow):
         self.chat_splitter.addWidget(self.chat_area_widget)
 
         self.main_layout.addWidget(self.chat_splitter)
+
+        # Set initial sizes for the splitter
+        self.chat_splitter.setSizes([200, 800])  # Adjust these values as needed
 
         self.raw_markdown = ""
 
@@ -568,9 +582,13 @@ class MainWindow(QMainWindow):
     def show_context_menu(self, pos):
         context_menu = QMenu(self)
         rename_action = context_menu.addAction("Rename Chat")
+        delete_action = context_menu.addAction("Delete Chat")  # Add the delete action
         action = context_menu.exec_(self.chat_list_widget.mapToGlobal(pos))
+
         if action == rename_action:
             self.rename_chat()
+        elif action == delete_action:  # Handle the delete action
+            self.delete_chat()
 
     def rename_chat(self):
         item = self.chat_list_widget.currentItem()
@@ -580,6 +598,22 @@ class MainWindow(QMainWindow):
                 session_id = item.data(Qt.UserRole)
                 update_chat_name(session_id, new_name)
                 item.setText(new_name)
+                if self.session_id == session_id:
+                    self.chat_name = new_name
+                    self.setWindowTitle(f"GPT Desktop Client - Selected Chat: {self.chat_name}")
+
+    def delete_chat(self):
+        item = self.chat_list_widget.currentItem()
+        if item:
+            session_id = item.data(Qt.UserRole)
+            reply = QMessageBox.question(self, "Delete Chat", "Are you sure you want to delete this chat?",
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                delete_chat_session(session_id)
+                self.chat_list_widget.takeItem(self.chat_list_widget.row(item))
+                QMessageBox.information(self, "Deleted", "Chat has been deleted.")
+                if self.session_id == session_id:
+                    self.new_chat()  # Clear the current chat if it was the one being viewed
 
 
 if __name__ == "__main__":
