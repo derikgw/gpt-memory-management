@@ -3,7 +3,7 @@ import uuid
 import sqlite3
 from cryptography.fernet import Fernet, InvalidToken
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QTextEdit, QPushButton, QMessageBox, \
-    QSplitter, QHBoxLayout, QComboBox, QTabWidget, QLineEdit, QLabel, QFormLayout, QFontComboBox, QSpinBox, QScrollArea, QFrame
+    QSplitter, QHBoxLayout, QComboBox, QTabWidget, QLineEdit, QLabel, QFormLayout, QFontComboBox, QSpinBox, QScrollArea, QFrame, QListWidget, QListWidgetItem
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
@@ -53,6 +53,14 @@ def initialize_database():
             api_key TEXT
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_name TEXT,
+            message_role TEXT,
+            message_content TEXT
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -98,11 +106,27 @@ def load_font_settings():
         return result[0], result[1]
     return "Arial", 12  # default font settings if none are saved
 
+def save_chat_history(chat_name, role, content):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO chats (chat_name, message_role, message_content) VALUES (?, ?, ?)",
+                   (chat_name, role, content))
+    conn.commit()
+    conn.close()
+
+def load_chat_history():
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT chat_name, message_role, message_content FROM chats ORDER BY id")
+    chats = cursor.fetchall()
+    conn.close()
+    return chats
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("GPT-4 Markdown Renderer")
-        self.setGeometry(100, 100, 800, 600)
+        self.setGeometry(100, 100, 1000, 600)
 
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
@@ -113,15 +137,24 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.main_widget, "Main")
         self.tabs.addTab(self.settings_widget, "Settings")
 
+        self.chat_name = ""
         self.setup_main_tab()
         self.setup_settings_tab()
 
         self.conversation_history = []  # List to store the chat history
+        self.load_chats()
 
     def setup_main_tab(self):
-        self.layout = QVBoxLayout(self.main_widget)
+        self.main_layout = QHBoxLayout(self.main_widget)
 
-        self.splitter = QSplitter(Qt.Vertical)
+        self.chat_splitter = QSplitter(Qt.Horizontal)
+
+        self.chat_list_widget = QListWidget(self)
+        self.chat_list_widget.itemClicked.connect(self.load_chat)
+        self.chat_splitter.addWidget(self.chat_list_widget)
+
+        self.chat_area_widget = QWidget()
+        self.chat_area_layout = QVBoxLayout(self.chat_area_widget)
 
         self.history_area = QScrollArea(self)
         self.history_area.setWidgetResizable(True)
@@ -133,10 +166,8 @@ class MainWindow(QMainWindow):
         self.prompt_entry = QTextEdit(self)
         self.prompt_entry.setPlaceholderText("Enter your prompt")
 
-        self.splitter.addWidget(self.history_area)
-        self.splitter.addWidget(self.prompt_entry)
-
-        self.layout.addWidget(self.splitter)
+        self.chat_area_layout.addWidget(self.history_area)
+        self.chat_area_layout.addWidget(self.prompt_entry)
 
         self.controls_widget = QWidget(self)
         self.controls_layout = QHBoxLayout(self.controls_widget)
@@ -151,10 +182,16 @@ class MainWindow(QMainWindow):
         self.copy_all_button = QPushButton("Copy All Content", self)
         self.copy_all_button.clicked.connect(self.copy_all_content)
 
+        self.controls_layout.addWidget(self.model_selector)
         self.controls_layout.addWidget(self.fetch_button)
         self.controls_layout.addWidget(self.copy_all_button)
+        self.controls_layout.addStretch()
 
-        self.layout.addWidget(self.controls_widget)
+        self.chat_area_layout.addWidget(self.controls_widget)
+
+        self.chat_splitter.addWidget(self.chat_area_widget)
+
+        self.main_layout.addWidget(self.chat_splitter)
 
         self.raw_markdown = ""
 
@@ -218,14 +255,20 @@ class MainWindow(QMainWindow):
 
             html_content = self.add_code_headers_and_copy_buttons(html_content, response)
 
+            # Generate chat name if not provided
+            if not self.chat_name:
+                self.chat_name = user_prompt[:60]
+
             # Update the conversation history
             self.conversation_history.append({"role": "user", "content": user_prompt})
             self.conversation_history.append({"role": "assistant", "content": response})
 
+            # Save chat history
+            save_chat_history(self.chat_name, "user", user_prompt)
+            save_chat_history(self.chat_name, "assistant", response)
+
             # Display the chat history
             self.display_chat_history(user_prompt, response, html_content)
-
-            self.splitter.setSizes([400, 100])
 
             # Clear the current prompt entry
             self.prompt_entry.clear()
@@ -400,6 +443,34 @@ class MainWindow(QMainWindow):
         self.prompt_entry.setFontFamily(font_name)
         self.prompt_entry.setFontPointSize(font_size)
         QMessageBox.information(self, "Saved", "Font settings have been saved.")
+
+    def load_chats(self):
+        chats = load_chat_history()
+        chat_names = set(chat[0] for chat in chats)
+        for chat_name in chat_names:
+            item = QListWidgetItem(chat_name)
+            self.chat_list_widget.addItem(item)
+
+    def load_chat(self, item):
+        self.chat_name = item.text()
+        self.history_layout = QVBoxLayout(self.history_widget)
+        self.history_widget.setLayout(self.history_layout)
+        chats = load_chat_history()
+        self.conversation_history = []
+        for chat_name, role, content in chats:
+            if chat_name == self.chat_name:
+                self.conversation_history.append({"role": role, "content": content})
+                if role == "user":
+                    prompt_label = QLabel(f"Prompt: {content}")
+                    prompt_label.setWordWrap(True)
+                    self.history_layout.addWidget(prompt_label)
+                else:
+                    response_view = QWebEngineView()
+                    html_content = markdown(content, extensions=[CodeHiliteExtension(linenums=False, css_class='codehilite'), FencedCodeExtension()])
+                    html_content = self.add_code_headers_and_copy_buttons(html_content, content)
+                    response_view.setHtml(html_content)
+                    self.history_layout.addWidget(response_view)
+        self.history_area.verticalScrollBar().setValue(self.history_area.verticalScrollBar().maximum())
 
 if __name__ == "__main__":
     initialize_database()
