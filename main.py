@@ -20,6 +20,7 @@ import re
 # Encryption setup
 KEY_FILE = "encryption.key"
 
+
 def load_or_generate_key():
     if os.path.exists(KEY_FILE):
         with open(KEY_FILE, "rb") as key_file:
@@ -30,11 +31,13 @@ def load_or_generate_key():
             key_file.write(key)
     return key
 
+
 encryption_key = load_or_generate_key()
 cipher_suite = Fernet(encryption_key)
 
 # Database setup
 db_path = "settings.db"
+
 
 def initialize_database():
     conn = sqlite3.connect(db_path)
@@ -64,6 +67,7 @@ def initialize_database():
     conn.commit()
     conn.close()
 
+
 def save_api_key(api_key):
     encrypted_api_key = cipher_suite.encrypt(api_key.encode())
     conn = sqlite3.connect(db_path)
@@ -71,6 +75,7 @@ def save_api_key(api_key):
     cursor.execute("INSERT OR REPLACE INTO api_keys (id, api_key) VALUES (1, ?)", (encrypted_api_key,))
     conn.commit()
     conn.close()
+
 
 def load_api_key():
     conn = sqlite3.connect(db_path)
@@ -88,6 +93,7 @@ def load_api_key():
             return ""
     return ""
 
+
 def save_font_settings(font_name, font_size):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -95,6 +101,7 @@ def save_font_settings(font_name, font_size):
                    (font_name, font_size))
     conn.commit()
     conn.close()
+
 
 def load_font_settings():
     conn = sqlite3.connect(db_path)
@@ -106,6 +113,7 @@ def load_font_settings():
         return result[0], result[1]
     return "Arial", 12  # default font settings if none are saved
 
+
 def save_chat_history(chat_name, role, content):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -114,6 +122,7 @@ def save_chat_history(chat_name, role, content):
     conn.commit()
     conn.close()
 
+
 def load_chat_history():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -121,6 +130,7 @@ def load_chat_history():
     chats = cursor.fetchall()
     conn.close()
     return chats
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -137,7 +147,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.main_widget, "Main")
         self.tabs.addTab(self.settings_widget, "Settings")
 
-        self.chat_name = ""
+        self.chat_name = None
         self.setup_main_tab()
         self.setup_settings_tab()
 
@@ -156,6 +166,8 @@ class MainWindow(QMainWindow):
         self.chat_area_widget = QWidget()
         self.chat_area_layout = QVBoxLayout(self.chat_area_widget)
 
+        self.chat_splitter2 = QSplitter(Qt.Vertical)
+
         self.history_area = QScrollArea(self)
         self.history_area.setWidgetResizable(True)
         self.history_widget = QWidget()
@@ -166,8 +178,11 @@ class MainWindow(QMainWindow):
         self.prompt_entry = QTextEdit(self)
         self.prompt_entry.setPlaceholderText("Enter your prompt")
 
-        self.chat_area_layout.addWidget(self.history_area)
-        self.chat_area_layout.addWidget(self.prompt_entry)
+        self.chat_splitter2.addWidget(self.history_area)
+        self.chat_splitter2.addWidget(self.prompt_entry)
+        self.chat_splitter2.setSizes([400, 100])
+
+        self.chat_area_layout.addWidget(self.chat_splitter2)
 
         self.controls_widget = QWidget(self)
         self.controls_layout = QHBoxLayout(self.controls_widget)
@@ -179,11 +194,14 @@ class MainWindow(QMainWindow):
         self.fetch_button = QPushButton("Generate Markdown", self)
         self.fetch_button.clicked.connect(self.fetch_and_display)
 
+        self.new_chat_button = QPushButton("New Chat", self)
+        self.new_chat_button.clicked.connect(self.new_chat)
+
         self.copy_all_button = QPushButton("Copy All Content", self)
         self.copy_all_button.clicked.connect(self.copy_all_content)
 
-        self.controls_layout.addWidget(self.model_selector)
         self.controls_layout.addWidget(self.fetch_button)
+        self.controls_layout.addWidget(self.new_chat_button)
         self.controls_layout.addWidget(self.copy_all_button)
         self.controls_layout.addStretch()
 
@@ -240,12 +258,7 @@ class MainWindow(QMainWindow):
         model = self.model_selector.currentText()
 
         try:
-            # Prepare the conversation history for the request
-            messages = [{"role": "system", "content": "You are an assistant."}]
-            messages.extend(self.conversation_history)
-            messages.append({"role": "user", "content": user_prompt})
-
-            completion = self.send_gpt_request(openai_api_key, model, messages)
+            completion = self.send_gpt_request(openai_api_key, model, user_prompt)
             response = completion.choices[0].message.content
             self.raw_markdown = response
 
@@ -256,7 +269,7 @@ class MainWindow(QMainWindow):
             html_content = self.add_code_headers_and_copy_buttons(html_content, response)
 
             # Generate chat name if not provided
-            if not self.chat_name:
+            if self.chat_name is None:
                 self.chat_name = user_prompt[:60]
 
             # Update the conversation history
@@ -275,7 +288,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"An error occurred: {e}")
 
-    def send_gpt_request(self, api_key, model, messages):
+    def send_gpt_request(self, api_key, model, prompt):
         # Set up the OpenAI client with the provided API key
         client = OpenAI()
         client.api_key = api_key
@@ -283,7 +296,7 @@ class MainWindow(QMainWindow):
         # Prepare and send the request to OpenAI
         completion = client.chat.completions.create(
             model=model,
-            messages=messages,
+            messages=[{"role": "user", "content": f"{prompt}: "}],
             stream=False  # Stream responses to process them as they arrive
         )
 
@@ -471,6 +484,15 @@ class MainWindow(QMainWindow):
                     response_view.setHtml(html_content)
                     self.history_layout.addWidget(response_view)
         self.history_area.verticalScrollBar().setValue(self.history_area.verticalScrollBar().maximum())
+
+    def new_chat(self):
+        self.chat_name = None
+        self.conversation_history = []
+        self.history_layout = QVBoxLayout(self.history_widget)
+        self.history_widget.setLayout(self.history_layout)
+        self.prompt_entry.clear()
+        self.history_area.verticalScrollBar().setValue(self.history_area.verticalScrollBar().maximum())
+
 
 if __name__ == "__main__":
     initialize_database()
