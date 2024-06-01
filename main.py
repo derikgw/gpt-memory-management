@@ -3,22 +3,23 @@ import uuid
 import sqlite3
 from cryptography.fernet import Fernet, InvalidToken
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QTextEdit, QPushButton, QMessageBox, \
-    QSplitter, QHBoxLayout, QComboBox, QTabWidget, QLineEdit, QLabel, QFormLayout
+    QSplitter, QHBoxLayout, QComboBox, QTabWidget, QLineEdit, QLabel, QFormLayout, QFontComboBox, QSpinBox
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont
 from dotenv import load_dotenv
 from markdown import markdown
 from markdown.extensions.fenced_code import FencedCodeExtension
 from markdown.extensions.codehilite import CodeHiliteExtension
 from openai import OpenAI
 from pygments.formatters.html import HtmlFormatter
-from pygments.styles import get_style_by_name
 from bs4 import BeautifulSoup
 import openai
 import re
 
 # Encryption setup
 KEY_FILE = "encryption.key"
+
 
 def load_or_generate_key():
     if os.path.exists(KEY_FILE):
@@ -30,11 +31,13 @@ def load_or_generate_key():
             key_file.write(key)
     return key
 
+
 encryption_key = load_or_generate_key()
 cipher_suite = Fernet(encryption_key)
 
 # Database setup
 db_path = "settings.db"
+
 
 def initialize_database():
     conn = sqlite3.connect(db_path)
@@ -42,24 +45,34 @@ def initialize_database():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             id INTEGER PRIMARY KEY,
+            theme TEXT,
+            font_name TEXT,
+            font_size INTEGER
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS api_keys (
+            id INTEGER PRIMARY KEY,
             api_key TEXT
         )
     """)
     conn.commit()
     conn.close()
 
+
 def save_api_key(api_key):
     encrypted_api_key = cipher_suite.encrypt(api_key.encode())
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO settings (id, api_key) VALUES (1, ?)", (encrypted_api_key,))
+    cursor.execute("INSERT OR REPLACE INTO api_keys (id, api_key) VALUES (1, ?)", (encrypted_api_key,))
     conn.commit()
     conn.close()
+
 
 def load_api_key():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    cursor.execute("SELECT api_key FROM settings WHERE id = 1")
+    cursor.execute("SELECT api_key FROM api_keys WHERE id = 1")
     result = cursor.fetchone()
     conn.close()
     if result:
@@ -67,9 +80,31 @@ def load_api_key():
             decrypted_api_key = cipher_suite.decrypt(result[0]).decode()
             return decrypted_api_key
         except InvalidToken:
-            QMessageBox.warning(None, "Invalid Token", "The stored API key could not be decrypted. Please re-enter your API key.")
+            QMessageBox.warning(None, "Invalid Token",
+                                "The stored API key could not be decrypted. Please re-enter your API key.")
             return ""
     return ""
+
+
+def save_font_settings(font_name, font_size):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO settings (id, font_name, font_size) VALUES (1, ?, ?)",
+                   (font_name, font_size))
+    conn.commit()
+    conn.close()
+
+
+def load_font_settings():
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT font_name, font_size FROM settings WHERE id = 1")
+    result = cursor.fetchone()
+    conn.close()
+    if result:
+        return result[0], result[1]
+    return "Arial", 12  # default font settings if none are saved
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -136,8 +171,22 @@ class MainWindow(QMainWindow):
         self.save_api_key_button = QPushButton("Save API Key", self)
         self.save_api_key_button.clicked.connect(self.save_api_key)
 
+        self.font_combo_box = QFontComboBox(self)
+        self.font_size_spin_box = QSpinBox(self)
+        self.font_size_spin_box.setRange(8, 48)
+
+        saved_font_name, saved_font_size = load_font_settings()
+        self.font_combo_box.setCurrentFont(QFont(saved_font_name))
+        self.font_size_spin_box.setValue(saved_font_size)
+
+        self.save_font_settings_button = QPushButton("Save Font Settings", self)
+        self.save_font_settings_button.clicked.connect(self.save_font_settings)
+
         self.settings_layout.addRow(QLabel("OpenAI API Key:"), self.api_key_input)
         self.settings_layout.addWidget(self.save_api_key_button)
+        self.settings_layout.addRow(QLabel("Font:"), self.font_combo_box)
+        self.settings_layout.addRow(QLabel("Font Size:"), self.font_size_spin_box)
+        self.settings_layout.addWidget(self.save_font_settings_button)
 
     def fetch_and_display(self):
         openai_api_key = load_api_key()
@@ -194,7 +243,10 @@ class MainWindow(QMainWindow):
     def add_code_headers_and_copy_buttons(self, html_content, markdown_content):
         languages = self.extract_languages_from_markdown(markdown_content)
 
-        style = get_style_by_name('monokai')
+        style = "monokai"
+        background_color = "#2E2E2E"
+        text_color = "#d8dee9"
+
         full_html_content = f"""
         <html>
         <head>
@@ -211,11 +263,11 @@ class MainWindow(QMainWindow):
                     display: flex;
                     justify-content: space-between;
                     align-items: center;
-                    background: #333333;
+                    background: {background_color};
                     padding: 8px;
                     font-size: 12px;
                     font-family: Arial, sans-serif;
-                    color: #ffffff;
+                    color: {text_color};
                     border-bottom: 1px solid #e1e4e8;
                 }}
                 .code-header .language {{
@@ -229,8 +281,8 @@ class MainWindow(QMainWindow):
                     font-size: 12px;
                 }}
                 pre {{
-                    background: #000000;
-                    color: #d8dee9;
+                    background: {background_color};
+                    color: {text_color};
                     border-radius: 0 0 6px 6px;
                     padding: 10px;
                     overflow: auto;
@@ -298,6 +350,14 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "Input Error", "Please enter a valid API Key.")
 
+    def save_font_settings(self):
+        font_name = self.font_combo_box.currentFont().family()
+        font_size = self.font_size_spin_box.value()
+        save_font_settings(font_name, font_size)
+        self.prompt_entry.setFontFamily(font_name)
+        self.prompt_entry.setFontPointSize(font_size)
+        QMessageBox.information(self, "Saved", "Font settings have been saved.")
+
 
 if __name__ == "__main__":
     initialize_database()
@@ -305,5 +365,8 @@ if __name__ == "__main__":
 
     app = QApplication([])
     window = MainWindow()
+    saved_font_name, saved_font_size = load_font_settings()
+    window.prompt_entry.setFontFamily(saved_font_name)
+    window.prompt_entry.setFontPointSize(saved_font_size)
     window.show()
     app.exec_()
